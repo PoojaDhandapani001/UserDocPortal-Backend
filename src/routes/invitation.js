@@ -3,6 +3,10 @@ import crypto from "crypto";
 import Invitation from "../models/Invitation.js";
 import { auth } from "../middleware/auth.js";
 import { authorize } from "../middleware/rbac.js";
+import nodemailer from "nodemailer";
+import { sendInvitationEmail } from "../utils/mailer.js";
+
+
 
 const router = express.Router();
 
@@ -74,11 +78,31 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
         },
       });
     }
+    const inviteLink = `${process.env.FRONTEND_URL_LOCAL}/accept-invite/${token}`;
+    await sendInvitationEmail(email, inviteLink);
+
+    const transporter = nodemailer.createTransport({
+      host: "smtp.ethereal.email",
+      port: 587,
+      auth: {
+        user: process.env.ETHEREAL_USER,
+        pass: process.env.ETHEREAL_PASS,
+      },
+    });
+
+    const mailOptions = {
+      from: `"User Portal" <${process.env.ETHEREAL_USER}>`,
+      to: email,
+      subject: "You are invited!",
+      html: `<p>Click the link to accept invitation: <a href="${inviteLink}">${inviteLink}</a></p>`,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
 
     res.json({
       message: "Invitation sent",
       inviteLink: `${process.env.FRONTEND_URL_LOCAL}/accept-invite/${token}`,
-      invitation,
+      previewUrl: nodemailer.getTestMessageUrl(info),
     });
   } catch (err) {
     console.error("Failed to create invitation:", err);
