@@ -1,120 +1,73 @@
 import express from "express";
-import multer from "multer";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-
 import { auth } from "../middleware/auth.js";
 import Document from "../models/Document.js";
-
+import cloudinary from "../utils/cloudinary.js"; // Cloudinary config
+import { uploadDocument, updateDocument } from "../utils/utilities.js";
 
 const router = express.Router();
 
-// Storage config (disk storage)
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadPath = path.join("./uploads");
-    fs.mkdirSync(uploadPath, { recursive: true });
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + "-" + file.originalname);
-  }
-});
-
-// Validate PDF and limit size
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype !== "application/pdf") {
-      return cb(new Error("Only PDFs allowed"));
-    }
-    cb(null, true);
-  }
-});
-
-// Upload document route (Owner/Admin only)
-router.post("/upload", auth, async (req, res, next) => {
-  if (!["OWNER", "ADMIN"].includes(req.user.role)) {
-    return res.status(403).json({ message: "Access denied" });
-  }
-
-  upload.single("file")(req, res, async (err) => {
-    if (err) {
-      return res.status(400).json({ message: err.message });
-    }
-
-    const doc = await Document.create({
-      filename: req.file.filename,
-      originalName: req.file.originalname,
-      uploader: req.user.id,
-      size: req.file.size
-    });
-    const io = req.app.get("io");
-
-io.to("admins").emit("document-updated", {
-  action: "uploaded",
-  document: savedDoc,
-});
-
-
-    res.json({ message: "Upload successful", document: doc });
-  });
-});
-
-
-// Needed to handle __dirname in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// List documents route
-router.get("/documents", auth, async (req, res) => {
-  let docs;
-  if (req.user.role === "VIEWER") {
-    // Viewers only see limited info
-    docs = await Document.find().select("originalName filename createdAt");
-  } else {
-    // Owners/Admins see full info
-    docs = await Document.find().populate("uploader", "email role");
-  }
+/**
+ * LIST DOCUMENTS
+ */
+router.get("/", auth, async (req, res) => {
+  const docs = await Document.find().sort({ createdAt: -1 });
   res.json(docs);
 });
 
-// Serve / view PDF
-router.get("/documents/:id", auth, async (req, res) => {
-  const { id } = req.params;
-  const doc = await Document.findById(id);
-
+/**
+ * VIEW DOCUMENT (PDF via Cloudinary URL)
+ */
+/**
+ * VIEW DOCUMENT (PDF)
+ */
+router.get("/:id/view", auth, async (req, res) => {
+  const doc = await Document.findById(req.params.id);
   if (!doc) return res.status(404).json({ message: "Document not found" });
 
-  // Check role
-  if (req.user.role === "VIEWER") {
-    // Viewer: allowed
-  } else if (!["OWNER", "ADMIN"].includes(req.user.role)) {
-    return res.status(403).json({ message: "Access denied" });
-  }
-
-  const filePath = path.join(__dirname, "../../uploads", doc.filename);
-  res.sendFile(filePath);
+  // Redirect to Cloudinary URL (opens in browser)
+  res.redirect(doc.url);
 });
 
-router.delete("/documents/:id", auth, async (req, res) => {
+
+
+
+/**
+ * UPLOAD
+ */
+router.post("/upload", auth, uploadDocument);
+
+/**
+ * UPDATE (rename / replace)
+ */
+router.patch("/:id", auth, updateDocument);
+
+/**
+ * DELETE
+ */
+router.delete("/:id", auth, async (req, res) => {
   if (!["OWNER", "ADMIN"].includes(req.user.role)) {
-    return res.status(403).json({ message: "Access denied" });
+    return res.status(403).json({ message: "Forbidden" });
   }
 
-  const doc = await Document.findByIdAndDelete(req.params.id);
-  if (!doc) return res.status(404).json({ message: "Not found" });
+  const doc = await Document.findById(req.params.id);
+  if (!doc) return res.status(404).end();
 
-  const io = req.app.get("io");
-  io.to("admins").emit("document-updated", {
-    action: "deleted",
-    documentId: doc._id,
-  });
+  try {
+    // Delete file from Cloudinary
+    if (doc.publicId) {
+      await cloudinary.uploader.destroy(doc.publicId, { resource_type: "raw" });
+    }
 
-  res.json({ message: "Document deleted" });
+    await doc.deleteOne();
+
+    // 🔥 socket update
+    req.app.get("io").emit("document:deleted", doc._id.toString());
+
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to delete document" });
+  }
 });
-
 
 export default router;

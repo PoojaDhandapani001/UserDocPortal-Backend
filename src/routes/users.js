@@ -26,7 +26,6 @@ router.get("/", auth, async (req, res) => {
  * OWNER → ADMIN / VIEWER
  * ADMIN → VIEWER only
  */
-// Invite user (OWNER / ADMIN)
 router.post("/invite", auth, async (req, res) => {
   const { email, role } = req.body;
 
@@ -55,7 +54,7 @@ router.post("/invite", auth, async (req, res) => {
 
   const token = crypto.randomBytes(32).toString("hex");
 
-  await Invitation.create({
+  const invitation = await Invitation.create({
     email,
     role,
     token,
@@ -78,62 +77,62 @@ router.post("/invite", auth, async (req, res) => {
     from: `"User Portal" <${process.env.ETHEREAL_USER}>`,
     to: email,
     subject: "You are invited!",
-    text: `Click the link to accept invitation: ${inviteLink}`,
     html: `<p>Click the link to accept invitation: <a href="${inviteLink}">${inviteLink}</a></p>`,
   };
 
   const info = await transporter.sendMail(mailOptions);
 
+  // 🔴 SOCKET EVENT
+  req.app.get("io").emit("user:invited", {
+    email,
+    role,
+  });
+
   res.json({
     message: "Invitation sent",
     inviteLink,
-    previewUrl: nodemailer.getTestMessageUrl(info), // THIS IS THE ETHEREAL PREVIEW URL
+    previewUrl: nodemailer.getTestMessageUrl(info),
   });
-  // res.json({ message: "Invitation created", inviteLink });
 });
 
+/**
+ * PATCH update user
+ */
 router.patch("/:id", auth, async (req, res) => {
   try {
-    const currentUserRole = req.user.role; // logged-in user's role
+    const currentUserRole = req.user.role;
     const targetUserId = req.params.id;
 
-    // Fetch target user
     const targetUser = await User.findById(targetUserId);
     if (!targetUser) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // --------------------------
-    // ROLE PERMISSIONS CHECKS
-    // --------------------------
-
-    // Viewers cannot edit anyone
+    // RBAC
     if (currentUserRole === "VIEWER") {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    // Admins can only edit viewers
     if (currentUserRole === "ADMIN") {
       if (targetUser.role !== "VIEWER") {
         return res.status(403).json({ message: "Admins can edit Viewers only" });
       }
       if (req.body.role && req.body.role !== "VIEWER") {
-        return res
-          .status(403)
-          .json({ message: "Admins cannot change user roles" });
+        return res.status(403).json({ message: "Admins cannot change roles" });
       }
     }
 
-    // Owners cannot edit other owners
-    if (currentUserRole === "OWNER" && targetUser.role === "OWNER" && targetUser._id.toString() !== req.user._id.toString()) {
+    if (
+      currentUserRole === "OWNER" &&
+      targetUser.role === "OWNER" &&
+      targetUser._id.toString() !== req.user._id.toString()
+    ) {
       return res
         .status(403)
         .json({ message: "Owners cannot edit other Owners" });
     }
 
-    // --------------------------
-    // APPLY ALLOWED UPDATES
-    // --------------------------
+    // Allowed fields
     const allowedUpdates = ["name", "role"];
     allowedUpdates.forEach((field) => {
       if (req.body[field] !== undefined) {
@@ -141,26 +140,36 @@ router.patch("/:id", auth, async (req, res) => {
       }
     });
 
-    // Auto-generate name if missing
     if (!targetUser.name) {
       targetUser.name = getNameFromEmail(targetUser.email);
     }
 
-    // Save changes
     await targetUser.save();
 
-    res.json({ message: "User updated successfully", user: targetUser });
+    // 🔴 SOCKET EVENT
+    req.app.get("io").emit("user:updated", {
+      _id: targetUser._id,
+      name: targetUser.name,
+      role: targetUser.role,
+    });
+
+    res.json({
+      message: "User updated successfully",
+      user: targetUser,
+    });
   } catch (err) {
     console.error("Error updating user:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
+/**
+ * DELETE user
+ */
 router.delete("/:id", auth, async (req, res) => {
   try {
-    const { role, id: requesterId } = req.user;
+    const { role } = req.user;
 
-    // Viewers can never delete users
     if (role === "VIEWER") {
       return res.status(403).json({ message: "Forbidden" });
     }
@@ -170,14 +179,12 @@ router.delete("/:id", auth, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Admins → Viewers only
     if (role === "ADMIN" && targetUser.role !== "VIEWER") {
       return res
         .status(403)
         .json({ message: "Admins can delete Viewers only" });
     }
 
-    // Owners → Admins + Viewers (cannot delete Owner)
     if (role === "OWNER" && targetUser.role === "OWNER") {
       return res
         .status(403)
@@ -185,6 +192,10 @@ router.delete("/:id", auth, async (req, res) => {
     }
 
     await targetUser.deleteOne();
+
+    // 🔴 SOCKET EVENT
+    req.app.get("io").emit("user:deleted", targetUser._id);
+
     res.status(204).send();
   } catch (err) {
     res.status(500).json({ message: "Server error" });

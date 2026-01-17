@@ -4,30 +4,46 @@ import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
-import dns from 'node:dns';
+import dns from "node:dns";
 
 dotenv.config();
 
-// Force Node.js to use Google DNS for all its lookups
-dns.setServers(['8.8.8.8', '8.8.4.4']);
+// Force DNS (ok to keep)
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 const app = express();
 const server = http.createServer(app);
 
-// SOCKET.IO SETUP
-const io = new Server(server, {
-  cors: {
-    origin: "*", // later restrict this
-  },
-});
+/* =======================
+   CORS (REST API)
+======================= */
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  })
+);
 
-// Make io accessible everywhere
-app.set("io", io);
-
-app.use(cors());
 app.use(express.json());
 
-// Routes
+/* =======================
+   SOCKET.IO
+======================= */
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST", "PATCH", "DELETE"],
+    credentials: true,
+  },
+  transports: ["websocket"], // 🔥 avoids polling issues
+});
+
+// Make io accessible in routes
+app.set("io", io);
+
+/* =======================
+   ROUTES
+======================= */
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
 import documentRoutes from "./routes/documents.js";
@@ -38,32 +54,30 @@ app.use("/api/users", userRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/invitations", invitationsRoutes);
 
-
+/* =======================
+   DB
+======================= */
 const connectDB = async () => {
-    try {
-        // Clear any previous buffered commands
-        mongoose.set('strictQuery', false); 
-        
-        await mongoose.connect(process.env.MONGO_URI, {
-            family: 4, 
-            serverSelectionTimeoutMS: 15000, // Give it more time for Reliance lag
-        });
-        console.log("✅ MongoDB Connected Successfully");
-    } catch (err) {
-        console.error("❌ Connection Failed:", err.message);
-        process.exit(1);
-    }
+  try {
+    mongoose.set("strictQuery", false);
+    await mongoose.connect(process.env.MONGO_URI, {
+      family: 4,
+      serverSelectionTimeoutMS: 15000,
+    });
+    console.log("✅ MongoDB Connected");
+  } catch (err) {
+    console.error("❌ MongoDB Error:", err.message);
+    process.exit(1);
+  }
 };
 
 connectDB();
 
-// SOCKET CONNECTION
+/* =======================
+   SOCKET EVENTS
+======================= */
 io.on("connection", (socket) => {
-  socket.on("test", (msg) => {
-  console.log("Received:", msg);
-});
-
-  console.log("Socket connected:", socket.id);
+  console.log("🟢 Socket connected:", socket.id);
 
   socket.on("join-role", (role) => {
     if (role === "OWNER" || role === "ADMIN") {
@@ -72,11 +86,14 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("Socket disconnected:", socket.id);
+    console.log("🔴 Socket disconnected:", socket.id);
   });
 });
 
+/* =======================
+   START SERVER
+======================= */
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

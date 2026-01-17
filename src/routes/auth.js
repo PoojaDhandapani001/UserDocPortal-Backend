@@ -3,6 +3,8 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import Invitation from "../models/Invitation.js";
+import { getNameFromEmail } from "../utils/utilities.js";
+
 
 
 const router = express.Router();
@@ -60,6 +62,7 @@ router.post("/accept-invite/:token", async (req, res) => {
   const hashed = await bcrypt.hash(password, 10);
 
   await User.create({
+    name: getNameFromEmail(invite.email),
     email: invite.email,
     password: hashed,
     role: invite.role,
