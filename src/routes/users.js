@@ -64,23 +64,7 @@ router.post("/invite", auth, async (req, res) => {
   const inviteLink = `${process.env.FRONTEND_URL}/accept-invite/${token}`;
   await sendInvitationEmail(email, inviteLink);
 
-  const transporter = nodemailer.createTransport({
-    host: "smtp.ethereal.email",
-    port: 587,
-    auth: {
-      user: process.env.ETHEREAL_USER,
-      pass: process.env.ETHEREAL_PASS,
-    },
-  });
 
-  const mailOptions = {
-    from: `"User Portal" <${process.env.ETHEREAL_USER}>`,
-    to: email,
-    subject: "You are invited!",
-    html: `<p>Click the link to accept invitation: <a href="${inviteLink}">${inviteLink}</a></p>`,
-  };
-
-  const info = await transporter.sendMail(mailOptions);
 
   // 🔴 SOCKET EVENT
   req.app.get("io").emit("user:invited", {
@@ -91,7 +75,7 @@ router.post("/invite", auth, async (req, res) => {
   res.json({
     message: "Invitation sent",
     inviteLink,
-    previewUrl: nodemailer.getTestMessageUrl(info),
+    previewUrl: inviteLink,
   });
 });
 

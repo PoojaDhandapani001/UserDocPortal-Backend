@@ -83,8 +83,7 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
     res.json({
       message: "Invitation sent",
       inviteLink, // show to admin
-      previewUrl:
-        process.env.NODE_ENV !== "production" ? inviteLink : undefined,
+      previewUrl: inviteLink,
     });
   } catch (err) {
     console.error("Failed to send invitation:", err);
