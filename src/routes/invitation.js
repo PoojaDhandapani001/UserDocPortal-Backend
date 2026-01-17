@@ -6,7 +6,11 @@ import { authorize } from "../middleware/rbac.js";
 
 const router = express.Router();
 
-// GET all pending invitations (OWNER/ADMIN only)
+/**
+ * GET /invitations?status=PENDING
+ * Fetch all invitations filtered by status (default: PENDING)
+ * Only OWNER/ADMIN can access
+ */
 router.get("/", auth, async (req, res) => {
   if (!["OWNER", "ADMIN"].includes(req.user.role)) {
     return res.status(403).json({ message: "Access denied" });
@@ -20,36 +24,61 @@ router.get("/", auth, async (req, res) => {
     const invitations = await Invitation.find({ status }).select("-token");
     res.json(invitations);
   } catch (err) {
+    console.error("Failed to fetch invitations:", err);
     res.status(500).json({ message: "Failed to fetch invitations" });
   }
 });
 
+/**
+ * POST /invitations/invite
+ * Create a new invitation (OWNER/ADMIN)
+ * Emits a live socket event to "admins" room
+ */
 router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
-  const { email, role } = req.body;
+  try {
+    const { email, role } = req.body;
 
-  const token = crypto.randomBytes(32).toString("hex");
+    const token = crypto.randomBytes(32).toString("hex");
 
-  const invitation = await Invitation.create({
-    email,
-    role,
-    token,
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-  });
-  const io = req.app.get("io");
+    const invitation = await Invitation.create({
+      email,
+      role,
+      token,
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h
+    });
 
-  io.to("admins").emit("user-updated", {
-    action: "invited",
-    email: invite.email,
-    role: invite.role,
-  });
+    // Emit socket event to admins
+    const io = req.app.get("io");
+    if (io) {
+      io.to("admins").emit("invitation-updated", {
+        action: "invited",
+        invitation: {
+          id: invitation._id,
+          email: invitation.email,
+          role: invitation.role,
+          status: invitation.status,
+          expiresAt: invitation.expiresAt,
+        },
+      });
+    }
 
-  res.json({
-    message: "Invitation sent",
-    inviteLink: `http://localhost:3000/accept-invite/${token}`,
-  });
+    res.json({
+      message: "Invitation sent",
+      inviteLink: `http://localhost:3000/accept-invite/${token}`,
+      invitation,
+    });
+  } catch (err) {
+    console.error("Failed to create invitation:", err);
+    res.status(500).json({ message: "Failed to send invitation" });
+  }
 });
 
-// POST /users/revoke/:id  (OWNER/ADMIN only)
+/**
+ * POST /invitations/revoke/:id
+ * Revoke a pending invitation (OWNER/ADMIN)
+ * Emits live socket event to refresh frontend lists
+ */
 router.post("/revoke/:id", auth, async (req, res) => {
   const invitationId = req.params.id;
 
@@ -57,23 +86,39 @@ router.post("/revoke/:id", auth, async (req, res) => {
     return res.status(403).json({ message: "Access denied" });
   }
 
-  const invitation = await Invitation.findById(invitationId);
-  if (!invitation) {
-    return res.status(404).json({ message: "Invitation not found" });
+  try {
+    const invitation = await Invitation.findById(invitationId);
+    if (!invitation) {
+      return res.status(404).json({ message: "Invitation not found" });
+    }
+
+    if (invitation.status !== "PENDING") {
+      return res.status(400).json({ message: "Cannot revoke this invitation" });
+    }
+
+    invitation.status = "EXPIRED";
+    await invitation.save();
+
+    // Emit live update
+    const io = req.app.get("io");
+    if (io) {
+      io.to("admins").emit("invitation-updated", {
+        action: "revoked",
+        invitation: {
+          id: invitation._id,
+          email: invitation.email,
+          role: invitation.role,
+          status: invitation.status,
+          expiresAt: invitation.expiresAt,
+        },
+      });
+    }
+
+    res.json({ message: "Invitation revoked", invitation });
+  } catch (err) {
+    console.error("Failed to revoke invitation:", err);
+    res.status(500).json({ message: "Failed to revoke invitation" });
   }
-
-  // Only PENDING invitations can be revoked
-  if (invitation.status !== "PENDING") {
-    return res.status(400).json({ message: "Cannot revoke this invitation" });
-  }
-
-  invitation.status = "EXPIRED";
-  await invitation.save();
-
-  // Optionally, emit socket event to refresh frontend lists
-  req.app.get("io").to("admins").emit("invitation-updated", invitation);
-
-  res.json({ message: "Invitation revoked", invitation });
 });
 
 export default router;

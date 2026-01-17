@@ -61,7 +61,7 @@ router.post("/invite", auth, async (req, res) => {
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
 
-  const inviteLink = `http://localhost:5173/accept-invite/${token}`;
+  const inviteLink = `${process.env.FRONTEND_URL_LOCAL}/accept-invite/${token}`;
   await sendInvitationEmail(email, inviteLink);
 
   const transporter = nodemailer.createTransport({
