@@ -20,7 +20,7 @@ const server = http.createServer(app);
 app.use(
   cors({
     origin: [
-      process.env.FRONTEND_URL_LOCAL,   // local frontend
+      process.env.FRONTEND_URL,   // local frontend
       process.env.FRONTEND_URL_PROD // prod frontend
     ],
     credentials: true
@@ -36,7 +36,7 @@ app.use(express.json());
 const io = new Server(server, {
   cors: {
     origin: [
-      process.env.FRONTEND_URL_LOCAL,   // local frontend
+      process.env.FRONTEND_URL,   // local frontend
       process.env.FRONTEND_URL_PROD // prod frontend
     ],
     methods: ["GET", "POST", "PATCH", "DELETE"],
