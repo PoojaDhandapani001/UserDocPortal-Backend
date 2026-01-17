@@ -3,7 +3,7 @@ import User from "../models/User.js";
 import Invitation from "../models/Invitation.js";
 import { auth } from "../middleware/auth.js";
 import crypto from "crypto";
-import { sendInvitationEmail } from "../utils/mailer.js";
+import { sendInvitationEmail } from "../utils/resend.js";
 import nodemailer from "nodemailer";
 import { getNameFromEmail } from "../utils/utilities.js";
 
