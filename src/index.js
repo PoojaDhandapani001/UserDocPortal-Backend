@@ -19,10 +19,14 @@ const server = http.createServer(app);
 ======================= */
 app.use(
   cors({
-    origin: "http://localhost:5173",
-    credentials: true,
+    origin: [
+      process.env.FRONTEND_URL_LOCAL,   // local frontend
+      process.env.FRONTEND_URL_PROD // prod frontend
+    ],
+    credentials: true
   })
 );
+
 
 app.use(express.json());
 
@@ -31,7 +35,10 @@ app.use(express.json());
 ======================= */
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: [
+      process.env.FRONTEND_URL_LOCAL,   // local frontend
+      process.env.FRONTEND_URL_PROD // prod frontend
+    ],
     methods: ["GET", "POST", "PATCH", "DELETE"],
     credentials: true,
   },
