@@ -3,17 +3,13 @@ import crypto from "crypto";
 import Invitation from "../models/Invitation.js";
 import { auth } from "../middleware/auth.js";
 import { authorize } from "../middleware/rbac.js";
-import nodemailer from "nodemailer";
-import { sendInvitationEmail } from "../utils/mailer.js";
-
-
+import { sendInvitationEmail } from "../utils/resend.js";
 
 const router = express.Router();
 
 /**
  * GET /invitations?status=PENDING
- * Fetch all invitations filtered by status (default: PENDING)
- * Only OWNER/ADMIN can access
+ * OWNER / ADMIN only
  */
 router.get("/", auth, async (req, res) => {
   if (!["OWNER", "ADMIN"].includes(req.user.role)) {
@@ -35,24 +31,23 @@ router.get("/", auth, async (req, res) => {
 
 /**
  * POST /invitations/invite
- * Create a new invitation (OWNER/ADMIN)
- * Emits a live socket event to "admins" room
+ * OWNER / ADMIN
  */
 router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
   try {
     const { email, role } = req.body;
 
-    // --- Prevent duplicate pending invitations ---
+    // Prevent duplicate pending invite
     const existingInvite = await Invitation.findOne({
       email,
       status: "PENDING",
     });
+
     if (existingInvite) {
       return res
         .status(400)
-        .json({ message: "There is already a pending invitation for this email" });
+        .json({ message: "Pending invitation already exists" });
     }
-
 
     const token = crypto.randomBytes(32).toString("hex");
 
@@ -64,7 +59,12 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
-    // --- Emit socket event immediately after creation ---
+    const inviteLink = `${process.env.FRONTEND_URL}/accept-invite/${token}`;
+
+    // ✅ Send email (Resend – fast & prod-safe)
+    await sendInvitationEmail(email, inviteLink);
+
+    // ✅ Emit socket event
     const io = req.app.get("io");
     if (io) {
       io.emit("invitation-updated", {
@@ -78,53 +78,31 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
         },
       });
     }
-    const inviteLink = `${process.env.FRONTEND_URL}/accept-invite/${token}`;
-    await sendInvitationEmail(email, inviteLink);
 
-    const transporter = nodemailer.createTransport({
-      host: "smtp.ethereal.email",
-      port: 587,
-      auth: {
-        user: process.env.ETHEREAL_USER,
-        pass: process.env.ETHEREAL_PASS,
-      },
-    });
-
-    const mailOptions = {
-      from: `"User Portal" <${process.env.ETHEREAL_USER}>`,
-      to: email,
-      subject: "You are invited!",
-      html: `<p>Click the link to accept invitation: <a href="${inviteLink}">${inviteLink}</a></p>`,
-    };
-
-    const info = await transporter.sendMail(mailOptions);
-
+    // ✅ Preview link restored (safe)
     res.json({
       message: "Invitation sent",
-      inviteLink: `${process.env.FRONTEND_URL}/accept-invite/${token}`,
-      previewUrl: nodemailer.getTestMessageUrl(info),
+      inviteLink, // show to admin
+      previewUrl:
+        process.env.NODE_ENV !== "production" ? inviteLink : undefined,
     });
   } catch (err) {
-    console.error("Failed to create invitation:", err);
+    console.error("Failed to send invitation:", err);
     res.status(500).json({ message: "Failed to send invitation" });
   }
 });
 
-
 /**
  * POST /invitations/revoke/:id
- * Revoke a pending invitation (OWNER/ADMIN)
- * Emits live socket event to refresh frontend lists
+ * OWNER / ADMIN
  */
 router.post("/revoke/:id", auth, async (req, res) => {
-  const invitationId = req.params.id;
-
   if (!["OWNER", "ADMIN"].includes(req.user.role)) {
     return res.status(403).json({ message: "Access denied" });
   }
 
   try {
-    const invitation = await Invitation.findById(invitationId);
+    const invitation = await Invitation.findById(req.params.id);
     if (!invitation) {
       return res.status(404).json({ message: "Invitation not found" });
     }
@@ -136,13 +114,13 @@ router.post("/revoke/:id", auth, async (req, res) => {
     invitation.status = "EXPIRED";
     await invitation.save();
 
-    // Emit live update
+    // ✅ Emit socket update
     const io = req.app.get("io");
     if (io) {
-      io.to("admins").emit("invitation-updated", {
+      io.emit("invitation-updated", {
         action: "revoked",
         invitation: {
-          id: invitation.id,
+          _id: invitation._id,
           email: invitation.email,
           role: invitation.role,
           status: invitation.status,
@@ -151,7 +129,7 @@ router.post("/revoke/:id", auth, async (req, res) => {
       });
     }
 
-    res.json({ message: "Invitation revoked", invitation });
+    res.json({ message: "Invitation revoked" });
   } catch (err) {
     console.error("Failed to revoke invitation:", err);
     res.status(500).json({ message: "Failed to revoke invitation" });
