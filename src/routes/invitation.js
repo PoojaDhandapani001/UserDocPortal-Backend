@@ -78,7 +78,7 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
         },
       });
     }
-    const inviteLink = `${process.env.FRONTEND_URL_PROD}/accept-invite/${token}`;
+    const inviteLink = `${process.env.FRONTEND_URL}/accept-invite/${token}`;
     await sendInvitationEmail(email, inviteLink);
 
     const transporter = nodemailer.createTransport({
@@ -101,7 +101,7 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
 
     res.json({
       message: "Invitation sent",
-      inviteLink: `${process.env.FRONTEND_URL_PROD}/accept-invite/${token}`,
+      inviteLink: `${process.env.FRONTEND_URL}/accept-invite/${token}`,
       previewUrl: nodemailer.getTestMessageUrl(info),
     });
   } catch (err) {

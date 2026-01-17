@@ -21,7 +21,7 @@ app.use(
   cors({
     origin: [
       process.env.FRONTEND_URL_LOCAL,   // local frontend
-      process.env.FRONTEND_URL_PROD // prod frontend
+      process.env.FRONTEND_URL // prod frontend
     ],
     credentials: true
   })
@@ -37,7 +37,7 @@ const io = new Server(server, {
   cors: {
     origin: [
       process.env.FRONTEND_URL_LOCAL,   // local frontend
-      process.env.FRONTEND_URL_PROD // prod frontend
+      process.env.FRONTEND_URL // prod frontend
     ],
     methods: ["GET", "POST", "PATCH", "DELETE"],
     credentials: true,
