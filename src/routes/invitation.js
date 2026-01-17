@@ -38,6 +38,18 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
   try {
     const { email, role } = req.body;
 
+    // --- Prevent duplicate pending invitations ---
+    const existingInvite = await Invitation.findOne({
+      email,
+      status: "PENDING",
+    });
+    if (existingInvite) {
+      return res
+        .status(400)
+        .json({ message: "There is already a pending invitation for this email" });
+    }
+
+
     const token = crypto.randomBytes(32).toString("hex");
 
     const invitation = await Invitation.create({
@@ -45,16 +57,16 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
       role,
       token,
       status: "PENDING",
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
-    // Emit socket event to admins
+    // --- Emit socket event immediately after creation ---
     const io = req.app.get("io");
     if (io) {
-      io.to("admins").emit("invitation-updated", {
+      io.emit("invitation-updated", {
         action: "invited",
         invitation: {
-          id: invitation._id,
+          _id: invitation._id,
           email: invitation.email,
           role: invitation.role,
           status: invitation.status,
@@ -65,7 +77,7 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
 
     res.json({
       message: "Invitation sent",
-      inviteLink: `http://localhost:3000/accept-invite/${token}`,
+      inviteLink: `${process.env.FRONTEND_URL_LOCAL}/accept-invite/${token}`,
       invitation,
     });
   } catch (err) {
@@ -73,6 +85,7 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
     res.status(500).json({ message: "Failed to send invitation" });
   }
 });
+
 
 /**
  * POST /invitations/revoke/:id
@@ -105,7 +118,7 @@ router.post("/revoke/:id", auth, async (req, res) => {
       io.to("admins").emit("invitation-updated", {
         action: "revoked",
         invitation: {
-          id: invitation._id,
+          id: invitation.id,
           email: invitation.email,
           role: invitation.role,
           status: invitation.status,
