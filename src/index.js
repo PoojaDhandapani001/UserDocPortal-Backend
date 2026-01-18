@@ -49,10 +49,10 @@ app.set("io", io);
 /* =======================
    ROUTES
 ======================= */
-import authRoutes from "./routes/auth.js";
-import userRoutes from "./routes/users.js";
-import documentRoutes from "./routes/documents.js";
-import invitationsRoutes from "./routes/invitation.js";
+import authRoutes from "./routes/authRouter.js";
+import userRoutes from "./routes/userRouter.js";
+import documentRoutes from "./routes/documentRouter.js";
+import invitationsRoutes from "./routes/invitationRouter.js";
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);

@@ -8,6 +8,7 @@ import cloudinary from "../utils/cloudinary.js";
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+
 /**
  * Upload a new document
  */
@@ -19,6 +20,8 @@ const uploadDocument = (req, res) => {
 
   let originalName = "";
   let rejected = false;
+  let totalSize = 0;
+  const chunks = [];
 
   busboy.on("file", (fieldname, file, info) => {
     if (!info.mimeType.includes("pdf")) {
@@ -28,21 +31,24 @@ const uploadDocument = (req, res) => {
     }
 
     originalName = info.filename;
-
     const sizeLimit = Number(process.env.CLOUDINARY_LIMIT || 10_000_000);
 
-    // Decide where to store: Cloudinary (small) or Local FS (large)
-    if (info.size && info.size <= sizeLimit) {
-      // Small file → buffer + Cloudinary
-      const chunks = [];
-      file.on("data", (chunk) => chunks.push(chunk));
-      file.on("end", () => {
-        if (rejected) return;
+    file.on("data", (chunk) => {
+      totalSize += chunk.length;
+      if (totalSize <= sizeLimit) chunks.push(chunk); // collect for Cloudinary
+    });
+
+    file.on("end", () => {
+      if (rejected) return;
+
+      if (totalSize <= sizeLimit) {
+        // ---------------- Small file → Cloudinary ----------------
         const buffer = Buffer.concat(chunks);
         const stream = cloudinary.uploader.upload_stream(
           { resource_type: "raw", folder: "documents" },
           async (err, result) => {
             if (err) return res.status(500).json({ message: "Cloudinary upload failed", error: err });
+
             const doc = await Document.create({
               originalName,
               filename: result.public_id,
@@ -51,41 +57,41 @@ const uploadDocument = (req, res) => {
               uploader: req.user.id,
               storage: "cloudinary",
             });
+
             req.app.get("io")?.emit("document:created", doc);
             res.json({ message: "Upload successful", doc });
           }
         );
         stream.end(buffer);
-      });
-    } else {
-      // Large file → Local FS
-      const localName = `${Date.now()}-${Math.random().toString(36)}.pdf`;
-      const localPath = path.join(UPLOAD_DIR, localName);
-      const writeStream = fs.createWriteStream(localPath);
-      let totalSize = 0;
+      } else {
+        // ---------------- Large file → Local FS ----------------
+        const localName = `${Date.now()}-${Math.random().toString(36)}.pdf`;
+        const localPath = path.join(UPLOAD_DIR, localName);
 
-      file.on("data", (chunk) => totalSize += chunk.length);
-      file.pipe(writeStream);
+        const writeStream = fs.createWriteStream(localPath);
+        file.pipe(writeStream);
 
-      writeStream.on("finish", async () => {
-        const doc = await Document.create({
-          originalName,
-          filename: localName,
-          path: localPath,
-          size: totalSize,
-          uploader: req.user.id,
-          storage: "local",
-          url: `${process.env.BACKEND_URL}/documents/file/${localName}`,
+        writeStream.on("finish", async () => {
+          const doc = await Document.create({
+            originalName,
+            filename: localName,
+            path: localPath,
+            size: totalSize,
+            uploader: req.user.id,
+            storage: "local",
+            url: `${process.env.BACKEND_URL}/documents/file/${localName}`,
+          });
+
+          req.app.get("io")?.emit("document:created", doc);
+          res.json({ message: "Upload successful", doc });
         });
-        req.app.get("io")?.emit("document:created", doc);
-        res.json({ message: "Upload successful", doc });
-      });
 
-      writeStream.on("error", (err) => {
-        console.error("File write error:", err);
-        res.status(500).json({ message: "Upload failed", error: err });
-      });
-    }
+        writeStream.on("error", (err) => {
+          console.error("File write error:", err);
+          res.status(500).json({ message: "Upload failed", error: err });
+        });
+      }
+    });
   });
 
   busboy.on("error", (err) => {
@@ -99,96 +105,102 @@ const uploadDocument = (req, res) => {
 /**
  * Update existing document
  */
-const updateDocument = async (req, res) => {
+const updateDocument = (req, res) => {
   if (!["OWNER", "ADMIN"].includes(req.user.role))
     return res.status(403).json({ message: "Forbidden" });
 
-  const doc = await Document.findById(req.params.id);
-  if (!doc) return res.status(404).json({ message: "Document not found" });
+  Document.findById(req.params.id).then((doc) => {
+    if (!doc) return res.status(404).json({ message: "Document not found" });
 
-  const busboy = Busboy({ headers: req.headers, limits: { fileSize: 500 * 1024 * 1024 } });
+    const busboy = Busboy({ headers: req.headers, limits: { fileSize: 500 * 1024 * 1024 } });
 
-  let newName = null;
+    let newName = null;
+    let totalSize = 0;
+    const chunks = [];
 
-  busboy.on("field", (name, value) => {
-    if (name === "originalName") newName = value;
-  });
+    busboy.on("field", (name, value) => {
+      if (name === "originalName") newName = value;
+    });
 
-  busboy.on("file", (fieldname, file, info) => {
-    if (!info.mimeType.includes("pdf")) {
-      file.resume();
-      return res.status(400).json({ message: "Only PDF allowed" });
-    }
+    busboy.on("file", (fieldname, file, info) => {
+      if (!info.mimeType.includes("pdf")) {
+        file.resume();
+        return res.status(400).json({ message: "Only PDF allowed" });
+      }
 
-    const sizeLimit = Number(process.env.CLOUDINARY_LIMIT || 10_000_000);
+      const sizeLimit = Number(process.env.CLOUDINARY_LIMIT || 10_000_000);
 
-    if (info.size && info.size <= sizeLimit) {
-      // Small file → Cloudinary
-      const chunks = [];
-      file.on("data", (chunk) => chunks.push(chunk));
+      file.on("data", (chunk) => {
+        totalSize += chunk.length;
+        if (totalSize <= sizeLimit) chunks.push(chunk);
+      });
+
       file.on("end", async () => {
-        const buffer = Buffer.concat(chunks);
+        try {
+          // Delete old file
+          if (doc.storage === "local" && doc.path && fs.existsSync(doc.path)) fs.unlinkSync(doc.path);
+          if (doc.storage === "cloudinary") await cloudinary.uploader.destroy(doc.filename, { resource_type: "raw" });
 
-        // Delete old file
-        if (doc.storage === "local" && doc.path && fs.existsSync(doc.path)) fs.unlinkSync(doc.path);
-        if (doc.storage === "cloudinary") await cloudinary.uploader.destroy(doc.filename, { resource_type: "raw" });
+          if (totalSize <= sizeLimit) {
+            // Small → Cloudinary
+            const buffer = Buffer.concat(chunks);
+            const stream = cloudinary.uploader.upload_stream(
+              { resource_type: "raw", folder: "documents" },
+              async (err, result) => {
+                if (err) return res.status(500).json({ message: "Cloudinary upload failed", error: err });
 
-        const stream = cloudinary.uploader.upload_stream(
-          { resource_type: "raw", folder: "documents" },
-          async (err, result) => {
-            if (err) return res.status(500).json({ message: "Cloudinary upload failed", error: err });
-            doc.filename = result.public_id;
-            doc.url = result.secure_url;
-            doc.storage = "cloudinary";
-            doc.size = buffer.length;
-            if (newName) doc.originalName = newName;
-            await doc.save();
-            req.app.get("io")?.emit("document:updated", doc);
-            res.json({ message: "Document updated", doc });
+                doc.filename = result.public_id;
+                doc.url = result.secure_url;
+                doc.storage = "cloudinary";
+                doc.size = buffer.length;
+                if (newName) doc.originalName = newName;
+                await doc.save();
+                req.app.get("io")?.emit("document:updated", doc);
+                res.json({ message: "Document updated", doc });
+              }
+            );
+            stream.end(buffer);
+          } else {
+            // Large → Local FS
+            const localName = `${Date.now()}-${Math.random().toString(36)}.pdf`;
+            const localPath = path.join(UPLOAD_DIR, localName);
+
+            const writeStream = fs.createWriteStream(localPath);
+            file.pipe(writeStream);
+
+            writeStream.on("finish", async () => {
+              doc.filename = localName;
+              doc.path = localPath;
+              doc.storage = "local";
+              doc.size = totalSize;
+              doc.url = `${process.env.BACKEND_URL}/documents/file/${localName}`;
+              if (newName) doc.originalName = newName;
+              await doc.save();
+              req.app.get("io")?.emit("document:updated", doc);
+              res.json({ message: "Document updated", doc });
+            });
+
+            writeStream.on("error", (err) => {
+              console.error("File write error:", err);
+              res.status(500).json({ message: "Update failed", error: err });
+            });
           }
-        );
-        stream.end(buffer);
+        } catch (err) {
+          console.error("Update error:", err);
+          res.status(500).json({ message: "Update failed", error: err });
+        }
       });
-    } else {
-      // Large file → Local FS
-      const localName = `${Date.now()}-${Math.random().toString(36)}.pdf`;
-      const localPath = path.join(UPLOAD_DIR, localName);
-      const writeStream = fs.createWriteStream(localPath);
-      let totalSize = 0;
+    });
 
-      file.on("data", (chunk) => totalSize += chunk.length);
-      file.pipe(writeStream);
+    busboy.on("error", (err) => {
+      console.error("Busboy error:", err);
+      res.status(500).json({ message: "Update failed", error: err });
+    });
 
-      writeStream.on("finish", async () => {
-        // Delete old file
-        if (doc.storage === "local" && doc.path && fs.existsSync(doc.path)) fs.unlinkSync(doc.path);
-        if (doc.storage === "cloudinary") await cloudinary.uploader.destroy(doc.filename, { resource_type: "raw" });
-
-        doc.filename = localName;
-        doc.path = localPath;
-        doc.storage = "local";
-        doc.size = totalSize;
-        doc.url = `${process.env.BACKEND_URL}/documents/file/${localName}`;
-        if (newName) doc.originalName = newName;
-        await doc.save();
-        req.app.get("io")?.emit("document:updated", doc);
-        res.json({ message: "Document updated", doc });
-      });
-
-      writeStream.on("error", (err) => {
-        console.error("File write error:", err);
-        res.status(500).json({ message: "Update failed", error: err });
-      });
-    }
+    req.pipe(busboy);
   });
-
-  busboy.on("error", (err) => {
-    console.error("Busboy error:", err);
-    res.status(500).json({ message: "Update failed", error: err });
-  });
-
-  req.pipe(busboy);
 };
+
 
 
 
