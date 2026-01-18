@@ -59,7 +59,7 @@ router.post("/invite", auth, authorize("INVITE_VIEWER"), async (req, res) => {
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
-    const inviteLink = `${process.env.FRONTEND_URL}/accept-invite/${token}`;
+    const inviteLink = `${process.env.FRONTEND_URL}/#/accept-invite/${token}`;
 
     // ✅ Send email (Resend – fast & prod-safe)
     await sendInvitationEmail(email, inviteLink);
