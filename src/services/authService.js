@@ -12,7 +12,7 @@ const AuthService = {
     const match = await bcrypt.compare(password, user.password);
     if (!match) throw { status: 400, message: "Invalid credentials" };
 
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });
+    const token = jwt.sign({ id: user._id, role: user.role, name: user.name }, process.env.JWT_SECRET, { expiresIn: "1d" });
     return token;
   },
 
