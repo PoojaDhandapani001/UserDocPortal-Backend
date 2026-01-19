@@ -9,6 +9,14 @@ const InvitationController = {
       res.status(err.status || 500).json({ message: err.message });
     }
   },
+  getInvitationById: async (req, res) => {
+    try {
+      const invitations = await InvitationService.getInvitationById(req.user, req.params.id, req.app.get("io"));
+      res.json(invitations);
+    } catch (err) {
+      res.status(err.status || 500).json({ message: err.message });
+    }
+  },
 
   sendInvite: async (req, res) => {
     try {

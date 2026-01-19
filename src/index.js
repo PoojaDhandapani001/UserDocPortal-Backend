@@ -5,6 +5,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import dns from "node:dns";
+import User from "./models/User.js";
 
 dotenv.config();
 
@@ -81,8 +82,12 @@ connectDB();
 /* =======================
    SOCKET EVENTS
 ======================= */
-io.on("connection", (socket) => {
+io.on("connection", async (socket) => {
   console.log("🟢 Socket connected:", socket.id);
+
+
+   const allUsers = await User.find().select("_id name email role");
+    socket.emit("recent-user-joins", allUsers);
 
   socket.on("join-role", (role) => {
     if (role === "OWNER" || role === "ADMIN") {
