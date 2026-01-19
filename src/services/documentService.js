@@ -52,8 +52,6 @@ const DocumentService = {
   },
 
   deleteDocument: async (id, user, io) => {
-    if (!["OWNER", "ADMIN"].includes(user.role)) throw { status: 403, message: "Forbidden" };
-
     const doc = await Document.findById(id);
     if (!doc) throw { status: 404, message: "Document not found" };
 
