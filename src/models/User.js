@@ -15,4 +15,8 @@ const userSchema = new mongoose.Schema({
   }
 });
 
+/* INDEXES */
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ status: 1, role: 1 });
+
 export default mongoose.model("User", userSchema);
