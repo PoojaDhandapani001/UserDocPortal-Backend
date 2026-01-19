@@ -10,4 +10,6 @@ const documentSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+documentSchema.index({ uploader: 1, createdAt: -1 });
+
 export default mongoose.model("Document", documentSchema);
