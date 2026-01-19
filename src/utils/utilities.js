@@ -244,4 +244,9 @@ const getNameFromEmail = (email) => {
     .join(" ");
 }
 
-export { UPLOAD_DIR, uploadDocument, updateDocument, getNameFromEmail };
+const isValidEmail = (email) => {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+export { UPLOAD_DIR, uploadDocument, updateDocument, getNameFromEmail, isValidEmail  };

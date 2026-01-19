@@ -5,6 +5,7 @@ import { auth } from "../middleware/auth.js";
 const router = express.Router();
 
 router.get("/", auth, InvitationController.listInvitations);
+router.get("/:id", auth, InvitationController.getInvitationById);
 router.post("/invite", auth, InvitationController.sendInvite);
 router.post("/revoke/:id", auth, InvitationController.revokeInvite);
 
